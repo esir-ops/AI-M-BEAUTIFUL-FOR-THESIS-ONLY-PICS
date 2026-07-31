@@ -625,6 +625,66 @@ html, body {
   display:inline-block; width:fit-content;
 }
 
+/* ══ TRY-ON MODAL — portrait & responsive ══ */
+.tryon-modal{
+  display:none;               /* JS toggles to flex */
+  position:fixed; inset:0; z-index:9999;
+  align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.88); padding:16px;
+}
+.tryon-card{
+  display:flex; flex-direction:column;
+  background:#1a0f0f; border:1px solid rgba(201,149,106,0.28);
+  border-radius:22px; padding:16px 16px 14px;
+  width:min(92vw, 400px);
+  max-height:94vh;
+  box-shadow:0 0 60px rgba(0,0,0,0.7);
+}
+.tryon-head{
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:12px; flex-shrink:0;
+}
+.tryon-title{
+  font-family:var(--serif); color:var(--rose-gold);
+  font-size:1.05rem; font-style:italic;
+}
+.tryon-close{
+  background:none; border:none; color:rgba(255,255,255,0.5);
+  font-size:1.5rem; line-height:1; cursor:pointer; padding:2px 8px;
+  transition:color .2s;
+}
+.tryon-close:hover{ color:#fff; }
+
+/* Portrait stage. Width is derived from the height cap so the 3:4 ratio always
+   holds and it never overflows the viewport on any phone. */
+.tryon-stage{
+  position:relative;
+  width:min(100%, 56vh);
+  aspect-ratio:3/4;
+  margin:0 auto;
+  border-radius:14px; overflow:hidden; background:#000;
+  flex-shrink:0;
+}
+.tryon-video{ position:absolute; opacity:0; width:1px; height:1px; }
+/* The canvas is drawn at the camera's native (landscape) resolution; object-fit
+   crops it to the portrait stage, and scaleX(-1) mirrors it like the other
+   camera views so it reads as a real mirror. */
+.tryon-canvas{
+  position:absolute; inset:0; width:100%; height:100%;
+  object-fit:cover; transform:scaleX(-1); display:block;
+}
+.tryon-loading{
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  color:rgba(255,255,255,0.4); font-family:var(--sans);
+  font-size:0.8rem; letter-spacing:0.1em;
+}
+.tryon-caption{
+  text-align:center; color:rgba(255,255,255,0.35);
+  font-family:var(--sans); font-size:0.66rem;
+  letter-spacing:0.1em; margin:12px 0 0; flex-shrink:0;
+}
+
 /* amount-to-apply card on the step screen */
 .step-coverage-card{
   display:flex; align-items:center; gap:.6rem;

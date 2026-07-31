@@ -691,7 +691,11 @@ function onDetectResults(results) {
         if(STATE.accNegStreak>=2) STATE.accActive=[];
       }
       if(STATE.accActive && STATE.accActive.includes('glasses')){
-        showGlassesWarn('If you are wearing glasses, removing them improves accuracy (optional)');
+        // Wording matches whether it actually blocks (trained model) or is a
+        // soft reminder (heuristic).
+        showGlassesWarn(glassesModelReady()
+          ? 'Remove your glasses to continue — your face must be fully visible'
+          : 'If you are wearing glasses, removing them improves accuracy (optional)');
       } else {
         const el=document.getElementById('glasses-warn');
         if(el&&!el.classList.contains('hide')) el.classList.add('hide');
@@ -880,14 +884,23 @@ function assessReadiness(image, lm) {
     if (avg>212) return {ok:false, reason:'Too bright - reduce glare'};
   } catch(e){}
 
-  // Face COVERINGS (mask, hand, object, hair over the face) are what block the
-  // photo, and they are caught reliably by occlusionCheck above using skin-tone
-  // consistency. GLASSES do NOT block capture: pixel detection of them is not
-  // reliable (dark eye areas, shadows and reflections read as "lenses"), so
-  // gating on it wrongly locks the user out. Glasses only raise a dismissible
-  // reminder banner - never a hard block. Reliable glasses gating needs the
-  // trained models/glasses/ model.
+  // Face COVERINGS (mask, hand, object, hair) are caught reliably by
+  // occlusionCheck above and block capture.
+  //
+  // GLASSES block capture ONLY when a TRAINED model is providing the detection
+  // (reliable). With just the pixel heuristic, glasses can't be told apart from
+  // dark eye areas / shadows, so they stay a non-blocking reminder — an
+  // unreliable guess must never trap the user. Drop a model into models/glasses/
+  // and this gate activates automatically.
+  if (glassesModelReady() && STATE.accActive && STATE.accActive.includes('glasses')){
+    return {ok:false, reason:'Remove your glasses - your face must be fully visible'};
+  }
   return {ok:true, reason:''};
+}
+
+// True only when a trained Teachable Machine glasses model is loaded and ready.
+function glassesModelReady() {
+  return typeof _tm!=='undefined' && _tm.glasses && _tm.glasses.state==='ready';
 }
 
 function resetCountdown(msg) {
@@ -2936,8 +2949,18 @@ function drawVirtualMakeup(ctx, lm, W, H, opts) {
     return {r:parseInt(hex.slice(1,3),16),g:parseInt(hex.slice(3,5),16),b:parseInt(hex.slice(5,7),16)};
   }
 
+  // Overall face-on factor. The 2D filter only lines up on a fairly frontal,
+  // level face; past that it smears across the cheeks/lips. Fade the WHOLE
+  // filter out as the head turns or tilts so it never renders a mismatched
+  // mess — better to show less makeup than makeup in the wrong place.
+  const _clamp=v=>Math.min(1,Math.max(0,v));
+  const _off = Math.abs((lm[1].x-lm[234].x)/((lm[454].x-lm[234].x)||0.001) - 0.5);
+  const _roll = Math.abs(lm[234].y-lm[454].y)/((Math.abs(lm[234].x-lm[454].x))||0.001);
+  const faceOn = _clamp(1 - Math.max(0,(_off-0.14))/0.20 - Math.max(0,(_roll-0.18))/0.25);
+  if (faceOn<=0.05) return;   // too turned/tilted to place makeup — draw nothing
+
   const styleMult = {};
-  STEPS.forEach(s=>{ styleMult[s]=styleIntensity(s, style); });
+  STEPS.forEach(s=>{ styleMult[s]=styleIntensity(s, style)*faceOn; });   // fade with pose
   const mult = stepOnly
     ? { lips:0, blush:0, eyebrows:0, contour:0, [stepOnly]: styleMult[stepOnly] }
     : styleMult;
@@ -3071,9 +3094,15 @@ function drawVirtualMakeup(ctx, lm, W, H, opts) {
     const {r,g,b}=rgb(tone.lips.hex);
     const lc=document.createElement('canvas'); lc.width=W; lc.height=H;
     const lx=lc.getContext('2d');
-    lx.filter='blur(1.2px)';
+    lx.filter='blur(1px)';
     lx.fillStyle=`rgb(${r},${g},${b})`;
-    const outerPts=lmPts(lm,LIP_OUTER_LOOP,W,H);
+    // Outer lip pulled 4% toward its centre so imperfect landmarks on a close /
+    // blurry frame keep the colour inside the lip line instead of bleeding onto
+    // the surrounding skin.
+    const outerRaw=lmPts(lm,LIP_OUTER_LOOP,W,H);
+    const ocx=outerRaw.reduce((s,p)=>s+p.x,0)/outerRaw.length;
+    const ocy=outerRaw.reduce((s,p)=>s+p.y,0)/outerRaw.length;
+    const outerPts=outerRaw.map(p=>({x:ocx+(p.x-ocx)*0.96, y:ocy+(p.y-ocy)*0.96}));
     lx.beginPath(); softPolyPath(lx,outerPts); lx.fill();
 
     // Inner punch-out, pulled 18% toward the mouth centre so it removes only
