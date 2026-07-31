@@ -1039,7 +1039,9 @@ function drawCaptureHint(ctx, W, H, ox, oy, message, count) {
 function drawWhiteGuide(ctx, pts, lw) {
   ctx.save();
   ctx.beginPath(); softArcPath(ctx,pts);
-  ctx.strokeStyle='rgba(255,255,255,0.90)'; ctx.lineWidth=lw*1.2;
+  // A fine line traces the lip edge precisely; a heavy one covered the very
+  // edge the user is meant to follow.
+  ctx.strokeStyle='rgba(255,255,255,0.95)'; ctx.lineWidth=lw*0.8;
   ctx.lineJoin='round'; ctx.lineCap='round'; ctx.stroke();
   ctx.restore();
 }
@@ -1080,12 +1082,14 @@ function drawLips(ctx, lm, W, H, strokeColor, fillColor, lw, filterMode, subStep
 
   if (!hasSubStep || subStep===2) {
     ctx.save(); ctx.beginPath(); softPolyPath(ctx,outerPts); ctx.fillStyle=strokeColor.replace(/[\d.]+\)$/,'0.22)'); ctx.fill(); ctx.restore();
-    ctx.save(); ctx.beginPath(); softPolyPath(ctx,outerPts); ctx.strokeStyle='rgba(0,0,0,0.40)'; ctx.lineWidth=lw*2+3; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
-    ctx.save(); ctx.beginPath(); softPolyPath(ctx,outerPts); ctx.strokeStyle=strokeColor; ctx.lineWidth=lw*1.6; ctx.shadowColor=strokeColor; ctx.shadowBlur=lw*2; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
-    ctx.save(); ctx.beginPath(); softPolyPath(ctx,innerPts); ctx.strokeStyle=strokeColor.replace(/[\d.]+\)$/,'0.55)'); ctx.lineWidth=Math.max(1,lw*0.7); ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
+    // Thin contrast backing + fine coloured line, so the outline reads clearly
+    // on any skin tone without smothering the lip edge.
+    ctx.save(); ctx.beginPath(); softPolyPath(ctx,outerPts); ctx.strokeStyle='rgba(0,0,0,0.38)'; ctx.lineWidth=lw*1.15+1.2; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.beginPath(); softPolyPath(ctx,outerPts); ctx.strokeStyle=strokeColor; ctx.lineWidth=lw*0.95; ctx.shadowColor=strokeColor; ctx.shadowBlur=lw*1.4; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.beginPath(); softPolyPath(ctx,innerPts); ctx.strokeStyle=strokeColor.replace(/[\d.]+\)$/,'0.55)'); ctx.lineWidth=Math.max(0.8,lw*0.5); ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
   }
 
-  const dotR=Math.max(3,Math.abs(lm[LM_BOTTOM_CENTER].y*H-lm[LM_CUPID_VALLEY].y*H)*0.07);
+  const dotR=Math.max(2.2,Math.abs(lm[LM_BOTTOM_CENTER].y*H-lm[LM_CUPID_VALLEY].y*H)*0.052);
   const dotDefs=[];
   if (!hasSubStep||subStep===0) dotDefs.push({idx:LM_CUPID_VALLEY,scale:1.0},{idx:61,scale:0.75},{idx:291,scale:0.75});
   if (!hasSubStep||subStep===1) dotDefs.push({idx:LM_BOTTOM_CENTER,scale:1.0},...(hasSubStep?[]:[{idx:61,scale:0.65},{idx:291,scale:0.65}]));
@@ -1741,7 +1745,9 @@ function renderStyleScreen() {
     return;
   }
 
-  if (sub) sub.textContent=`Same recommended shades for ${focalLabel}, three levels of coverage - previewed on your own photo`;
+  // Kept short: on a phone a longer line wraps to three rows and pushes the
+  // reference guide and Continue button down the page.
+  if (sub) sub.textContent=`Same ${focalLabel} shades, three levels of coverage`;
 
   const focalStep={lips:'lips',eyebrows:'eyebrows',cheeks:'blush',contour:'contour'}[STATE.focal]||'lips';
 
@@ -2031,7 +2037,7 @@ function onStepResults(results) {
 
   const blushCov=cs==='blush'?getBlushCoverage(document.getElementById('step-video'),blm):undefined;
 
-  if      (cs==='lips')     drawLips   (ctx,dlm,effW,effH,sc,fc,3.5,true,STATE.lipSubStep);
+  if      (cs==='lips')     drawLips   (ctx,dlm,effW,effH,sc,fc,2.1,true,STATE.lipSubStep);
   else if (cs==='blush')    drawBlush  (ctx,dlm,effW,effH,sc,fc,4,blushCov);
   else if (cs==='eyebrows') drawBrows  (ctx,dlm,effW,effH,sc,fc,4.5);
   else if (cs==='contour')  drawContour(ctx,dlm,effW,effH,sc,fc,4);
