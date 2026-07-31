@@ -280,6 +280,8 @@ html, body {
   color:var(--rose-light);
 }
 
+.tryon-cta{ text-align:center; margin:22px 0 6px; }
+
 .page-actions {
   display:flex; flex-direction:column;
   align-items:center; gap:.75rem; width:100%;
@@ -750,14 +752,116 @@ html, body {
   .style-grid{ grid-template-columns:1fr; }
 }
 
+/* ══════════════════════════════════════════════════════════
+   PHONE LAYOUT - every screen fits the viewport, so the next
+   button is always reachable without scrolling.
+══════════════════════════════════════════════════════════ */
 @media(max-width:640px){
-  .step-layout{ flex-direction:column; }
-  .step-mirror-col{ border-right:none; border-bottom:1px solid var(--border); flex-direction:row; align-items:flex-start; }
-  /* Keep the mirror and reference side-by-side, both portrait, on phones too. */
-  .step-cam-box{ aspect-ratio:3/4; }
-  .step-info-col{ padding:1.2rem 1rem; }
-  .found-card{ flex-direction:column; text-align:center; }
+  /* Tighter page rhythm across all screens */
+  .page-wrap{ padding:1rem 1rem 1.25rem; gap:.75rem; }
+  .page-title{ font-size:1.45rem; margin-bottom:.15rem; }
+  .page-sub{ font-size:.72rem; line-height:1.4; }
+  .page-actions{ gap:.5rem; }
+
+  /* ── Shades screen ── */
+  .shade-grid{ gap:.5rem; }
+  .shade-card{ padding:.6rem .5rem; gap:.3rem; }
+  .shade-swatch{ width:38px; height:38px; border-width:1px; }
+  .shade-name-txt{ font-size:.85rem; }
+  .shade-brand-txt{ font-size:.62rem; }
+  .shade-step-label{ font-size:.58rem; }
+  .shade-slot-badge{ font-size:.58rem; padding:.12rem .5rem; }
+  .tryon-cta{ margin:.4rem 0 .1rem; }
+  .focal-badge{ font-size:.68rem; padding:.25rem .8rem; }
+
+  /* ── Variation screen: compact rows. The coverage meter communicates the
+        difference better than the paragraph, so the copy is dropped here. ── */
+  .style-grid{ grid-template-columns:1fr; gap:.45rem; }
+  .style-card{ padding:.55rem .7rem; gap:.3rem; }
+  .style-name{ font-size:.92rem; }
+  .style-desc{ display:none; }
+  .cov-label{ font-size:.58rem; }
+  .cov-seg{ width:14px; height:4px; }
+  .style-swatch{ width:17px; height:17px; }
+  .style-swatch-row{ gap:.25rem; }
+  .style-swatch-row::after{ font-size:.52rem; margin-left:.25rem; }
+  .ref-guide-block{ padding:.5rem; gap:.3rem; }
+  .ref-guide-canvas{ max-width:104px; }
+  .ref-guide-note{ display:none; }
+  .ref-guide-title{ font-size:.6rem; }
+  .ref-guide-empty{ font-size:.66rem; }
+
+  /* ── Step guide: no dead space between the mirror and the controls ── */
+  .step-layout{ flex-direction:column; min-height:100vh; min-height:100dvh; }
+  .step-mirror-col{
+    border-right:none; border-bottom:1px solid var(--border);
+    flex:0 0 auto;              /* was stretching to 2.4fr, leaving a big gap */
+    flex-direction:row; align-items:flex-start;
+    padding:.55rem; gap:.5rem;
+  }
+  .step-cam-box{ aspect-ratio:3/4; max-height:none; }
+  .step-ref-col{ gap:.25rem; }
+  .step-ref-title{ font-size:.54rem; }
+  .step-ref-style{ font-size:.7rem; }
+  .step-info-col{
+    flex:1 1 auto; overflow:visible;
+    padding:.7rem .9rem 1rem; gap:.55rem;
+    min-width:0; max-width:none;
+  }
+  .step-counter{ font-size:.66rem; }
+  .step-name{ font-size:1.25rem; }
+  .step-instruction{ font-size:.75rem; line-height:1.45; }
+  .step-shade-card{ padding:.5rem .7rem; gap:.6rem; }
+  .ssc-swatch{ width:32px; height:32px; }
+  .ssc-shade{ font-size:.85rem; }
+  .ssc-brand{ font-size:.64rem; }
+  .ssc-slot{ font-size:.6rem; }
+  .step-coverage-card{ padding:.4rem .7rem; gap:.45rem; }
+  .scc-label{ font-size:.58rem; }
+  .scc-text{ font-size:.66rem; }
+  .step-actions{ gap:.4rem; margin-top:.5rem; }
+  .feedback-icon{ font-size:1.4rem; margin-bottom:.2rem; }
+  .feedback-msg{ font-size:.75rem; }
+  .feedback-area{ padding:.7rem; }
+
+  /* ── Foundation screen ── */
+  .found-card{ flex-direction:column; text-align:center; padding:.8rem; gap:.5rem; }
   .found-info{ align-items:center; }
+  .found-swatch{ width:46px; height:46px; }
+  .found-shade{ font-size:1.05rem; }
+  .found-disclaimer{ font-size:.66rem; line-height:1.5; padding-top:.6rem; }
+}
+
+/* Short phones (SE-sized, or any phone with browser chrome eating the height).
+   Same layout, compressed further so nothing spills below the fold. */
+@media(max-width:640px) and (max-height:700px){
+  .page-wrap{ padding:.6rem .85rem .8rem; gap:.45rem; }
+  .page-title{ font-size:1.15rem; }
+  .page-sub{ font-size:.66rem; }
+  .page-actions{ gap:.4rem; }
+
+  .shade-card{ padding:.45rem .4rem; gap:.2rem; }
+  .shade-swatch{ width:32px; height:32px; }
+  .shade-name-txt{ font-size:.78rem; }
+  .tryon-cta{ margin:.2rem 0 0; }
+
+  .style-card{ padding:.4rem .6rem; gap:.2rem; }
+  .style-name{ font-size:.85rem; }
+  .ref-guide-block{ padding:.4rem; }
+  .ref-guide-canvas{ max-width:76px; }
+  .ref-guide-title{ font-size:.55rem; }
+
+  .step-mirror-col{ padding:.4rem; gap:.4rem; }
+  .step-info-col{ padding:.5rem .75rem .7rem; gap:.4rem; }
+  .step-name{ font-size:1.05rem; }
+  .step-instruction{ font-size:.7rem; line-height:1.35; }
+  .step-shade-card{ padding:.4rem .6rem; }
+  .ssc-swatch{ width:26px; height:26px; }
+  .step-actions{ gap:.35rem; margin-top:.35rem; }
+
+  .found-card{ padding:.6rem; }
+  .found-swatch{ width:38px; height:38px; }
+  .found-disclaimer{ font-size:.6rem; padding-top:.45rem; }
 }
 
 /* ══ IR TOUCH FRAME - coarse pointer targets ══
@@ -770,4 +874,14 @@ html, body {
   .focal-card{ padding:1.9rem 1rem; }
   .style-card{ padding:1.2rem 1rem; }
   .glasses-warn-close{ padding:10px 14px; font-size:1.1rem; }
+}
+
+/* A phone is a coarse pointer too, so the generous mirror-sized hit areas above
+   would undo the compact phone layout and push the next button off-screen.
+   Keep targets at the 44px touch minimum instead of the kiosk sizing. */
+@media (pointer:coarse) and (max-width:640px){
+  .btn-primary, .btn-glow, .btn-tryon{ padding-top:.72rem; padding-bottom:.72rem; }
+  .btn-ghost, .btn-retry, .btn-compare{ padding-top:.6rem; padding-bottom:.6rem; }
+  .focal-card{ padding:1rem .8rem; }
+  .style-card{ padding:.55rem .7rem; }
 }

@@ -1394,6 +1394,74 @@ function drawContour(ctx, lm, W, H, sc, fc, lw) {
 // ─────────────────────────────────────────
 //  SKIN TONE
 // ─────────────────────────────────────────
+// ─────────────────────────────────────────
+//  NEUTRAL WHITE REFERENCE (sclera)
+//  The whites of the eyes are approximately
+//  neutral for every person, so any colour
+//  tint measured there belongs to the
+//  LIGHTING, not the skin. Using it to
+//  white-balance the skin sample is what
+//  makes the tone reading consistent under
+//  a warm bulb, daylight or an LED strip -
+//  the lighting sensitivity flagged in the
+//  skin-tone literature (Mbatha et al.).
+// ─────────────────────────────────────────
+function sampleScleraWhite(ctx, lm, vW, vH) {
+  try {
+    const pts=[];
+    const between=(cornerIdx, irisIdx)=>{
+      const c=lm[cornerIdx], ir=lm[irisIdx];
+      if(!c||!ir) return;
+      [0.35,0.55].forEach(t=>pts.push({x:c.x+(ir.x-c.x)*t, y:c.y+(ir.y-c.y)*t}));
+    };
+    if (lm.length>473){
+      // refineLandmarks gives iris centres (468 left, 473 right): the segment
+      // from each eye corner toward the iris lands squarely on sclera.
+      between(33,468); between(133,468);
+      between(263,473); between(362,473);
+    } else {
+      [[33,133],[362,263]].forEach(([a,b])=>{
+        const p=lm[a], q=lm[b]; if(!p||!q) return;
+        pts.push({x:(p.x+q.x)/2, y:(p.y+q.y)/2});
+      });
+    }
+
+    const cand=[];
+    pts.forEach(p=>{
+      const cx=Math.round(p.x*vW), cy=Math.round(p.y*vH);
+      const x0=Math.max(0,cx-2), y0=Math.max(0,cy-2);
+      const w=Math.min(vW,cx+3)-x0, h=Math.min(vH,cy+3)-y0;
+      if(w<=0||h<=0) return;
+      const d=ctx.getImageData(x0,y0,w,h).data;
+      for(let q=0;q<d.length;q+=4){
+        const r=d[q], g=d[q+1], b=d[q+2];
+        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+        const sat = mx===0 ? 0 : (mx-mn)/mx;
+        // Sclera signature: BRIGHT, and the least saturated thing in the eye
+        // region. The tolerance must be loose, because a strong colour cast
+        // tints the sclera itself (a warm bulb pushes it to ~0.35) - that tint
+        // is exactly the signal we are here to measure, so a tight filter threw
+        // the reference away and left no correction at all. The upper bound
+        // must also allow 255, or a clipped sclera is discarded in favour of
+        // the anti-aliased rim pixels blended with the brown iris.
+        if (mx>70 && sat<0.45) cand.push({r,g,b,v:mx,s:sat});
+      }
+    });
+    if (cand.length<8) return null;
+    // Of those, keep the least saturated half: skin and iris are far more
+    // saturated than sclera under any illuminant, so this rejects them
+    // without assuming what the illuminant is.
+    cand.sort((a,b)=>a.s-b.s);
+    const top=cand.slice(0, Math.max(6, Math.floor(cand.length*0.5)));
+    const med=k=>{const a=top.map(s=>s[k]).sort((p,q)=>p-q);return a[a.length>>1];};
+    const w={r:med('r'), g:med('g'), b:med('b')};
+    // A clipped reference has lost its colour information, so the cast it
+    // reports cannot be trusted (only its brightness can).
+    w.clipped = Math.max(w.r,w.g,w.b) >= 250;
+    return w;
+  } catch(e){ return null; }
+}
+
 function detectToneFromImage(image, lm, W, H) {
   try {
     const vW=image.width||W, vH=image.height||H;
@@ -1418,12 +1486,52 @@ function detectToneFromImage(image, lm, W, H) {
     // Median per channel - robust to a single shadowed point, stray hair, or a
     // glasses frame crossing a sample.
     const med=k=>{const a=samples.map(s=>s[k]).sort((p,q)=>p-q);return a[a.length>>1];};
-    const r=med('r'), g=med('g'), b=med('b');
+    let r=med('r'), g=med('g'), b=med('b');
+
+    // ── Lighting normalisation against the neutral sclera reference ──
+    const white=sampleScleraWhite(ctx, lm, vW, vH);
+    if (white){
+      // 1. Colour cast: per-channel gains that would neutralise the reference
+      //    to grey (von Kries adaptation). Removes the warm-bulb / cool-tube
+      //    bias that made the undertone read the same for everyone. Skipped if
+      //    the reference is clipped, since its colour is then meaningless.
+      const clampGain=v=>Math.min(1.6, Math.max(0.625, v));
+      if (!white.clipped){
+        const wMean=(white.r+white.g+white.b)/3;
+        r=Math.min(255,r*clampGain(wMean/Math.max(1,white.r)));
+        g=Math.min(255,g*clampGain(wMean/Math.max(1,white.g)));
+        b=Math.min(255,b*clampGain(wMean/Math.max(1,white.b)));
+      } else {
+        // Reference is clipped, so its absolute level is unusable - but the
+        // ratios between channels that did NOT clip still carry the cast.
+        // Anchor on green (the last channel to blow out) for a partial
+        // correction; better than leaving the cast in entirely.
+        r=Math.min(255,r*clampGain(white.g/Math.max(1,white.r)));
+        b=Math.min(255,b*clampGain(white.g/Math.max(1,white.b)));
+      }
+
+    }
+
     const br=r*.299+g*.587+b*.114;
-    // Bands recalibrated: the canonical medium skin swatch (#c9976e, br 162)
-    // used to fall into "light" because the old cut was 160. 178 / 128 keeps
-    // medium skin in the medium band.
-    const level = br>178 ? 'light' : br>128 ? 'medium' : 'dark';
+
+    // ── Tone level ──
+    // Measured as skin brightness RELATIVE to the sclera rather than in
+    // absolute terms. Both are lit by the same source, so the ratio cancels the
+    // exposure out entirely: the same person reads the same in a dim room, a
+    // bright one, or under a lamp. Absolute brightness cannot do that - it is
+    // what made a dim room classify everyone as deep.
+    let level;
+    if (white && !white.clipped){
+      const wBr=white.r*.299+white.g*.587+white.b*.114;
+      const ratio=br/Math.max(1,wBr);
+      // Boundaries sit midway between the reference skin swatches measured
+      // against a neutral sclera (light .90, medium .68, deep .42).
+      level = ratio>0.785 ? 'light' : ratio>0.545 ? 'medium' : 'dark';
+    } else {
+      // No usable reference (eyes closed, or highlights blown): fall back to
+      // absolute bands, which are exposure-dependent but better than nothing.
+      level = br>178 ? 'light' : br>128 ? 'medium' : 'dark';
+    }
     // Undertone judged relative to overall brightness, so it isn't just "warm"
     // for everyone (skin is always r>b in absolute terms).
     const undertone = (r-b) > br*0.20 ? 'warm' : 'cool';
