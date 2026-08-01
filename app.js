@@ -573,37 +573,89 @@ function checkAccessories(image, lm) {
   } catch(e){return [];}
 }
 
-// Pixel-heuristic glasses scoring - the fallback used only when no trained
-// glasses model is installed. Conservative and symmetry-first (see comments).
+// Pixel-heuristic glasses scoring. This is the fallback whenever no trained
+// glasses model is installed. Since the policy is HARD-BLOCK on any detection,
+// this tuning favours recall over precision within the constraints below.
+//
+// Tuned specifically for the failure case the old detector missed:
+// clear-lens metal-rimmed frames. The old detector required the lens brightness
+// anomaly to fire, and that cue is silent on clear lenses - so a whole class
+// of glasses was invisible to it. This version drops the lens dependency and
+// leans on signals that survive thin metal / clear lens / hair-covered temples.
 function runGlassesHeuristic(px, fhBr, found) {
-  const cheek=px([116,345,50,280]);
-  const ckBr=cheek?cheek.br():fhBr;
-  const underEye=px([234,454,50,280,116,345]);
-  const ueBr=underEye?underEye.br():ckBr;
+  // ── Clean baselines ──────────────────────────────────────────────
+  const cheek = px([116,345,50,280]);
+  const ckBr  = cheek ? cheek.br() : fhBr;
+  // Under-eye pouches only. The old sampler mixed in the temples (234, 454)
+  // which are hair on many people - that biased the baseline dark and hid
+  // the very rim signals below.
+  const underEye = px([145,144,163,374,373,390]);
+  const ueBr = underEye ? underEye.br() : ckBr;
+  // Forehead skin ONLY (no brow indices). This becomes the "clean skin at
+  // eye-line height" reference for the nose-bridge break signal.
+  const forehead = px([10,9,151,108,337]);
+  const fhCleanBr = forehead ? forehead.br() : fhBr;
 
-  // Conservative scoring — this only drives an OPTIONAL reminder now (it never
-  // blocks capture), so it is tuned to stay quiet unless several independent,
-  // symmetric cues agree. The lens zone is the strongest cue but is NOT enough
-  // on its own, because dark eye areas / lashes / shadows can mimic a lens
-  // anomaly on a bare face; it must be corroborated by a rim, temple or bridge
-  // signal. That combination is hard for a bare face to produce.
-  let score=0;
+  let score = 0;
 
-  const lLens=px([159]), rLens=px([386]);
-  if (lLens && rLens && Math.abs(lLens.br()-ueBr)>36 && Math.abs(rLens.br()-ueBr)>36) score+=2;
+  // ── Signal A: Nose-bridge break ─────────────────────────────────
+  // Almost every pair of glasses - metal, plastic, rimless, rimmed - has
+  // hardware between the two lenses on the bridge of the nose. Sample the
+  // strip there and compare to the same-lighting forehead skin above. On a
+  // bare face this diff is tiny; on any glasses it's noticeable.
+  const bridgeBand = px([168, 6, 197, 193, 417]);
+  if (bridgeBand){
+    const diff = fhCleanBr - bridgeBand.br();
+    if      (diff > 20) score += 2;    // strong: dark hardware clearly present
+    else if (diff > 10) score += 1;    // weak: possible thin frame
+  }
 
-  const lRim=px([119,230]), rRim=px([348,450]);
-  if (lRim && rRim && lRim.br()<ckBr-26 && rRim.br()<ckBr-26) score+=1;
+  // ── Signal B: Lower rim on the cheek ────────────────────────────
+  // The lower edge of a glasses lens sits on BARE CHEEK skin (unlike the
+  // upper edge, which fights with the eyebrow). Sample below-eye landmarks
+  // that fall on the cheek right where a lower rim would rest. Symmetric -
+  // BOTH sides must show it, so an asymmetric shadow (one side of the face
+  // in shade) does not trigger.
+  const lLowerRim = px([119, 118, 117, 111]);   // below left eye, on cheek
+  const rLowerRim = px([348, 347, 346, 340]);   // below right eye, on cheek
+  if (lLowerRim && rLowerRim){
+    const dL = ckBr - lLowerRim.br();
+    const dR = ckBr - rLowerRim.br();
+    if      (dL > 12 && dR > 12) score += 2;   // strong: rim clearly darker
+    else if (dL >  6 && dR >  6) score += 1;   // weak: thin metal
+  }
 
-  const lTemple=px([127,162,21]), rTemple=px([356,389,251]);
-  if (lTemple && rTemple && lTemple.br()<ckBr-30 && rTemple.br()<ckBr-30) score+=1;
+  // ── Signal C: Lens reflectivity ─────────────────────────────────
+  // Glass catches ambient light differently than skin. On tinted or dark
+  // lenses the sample is very dark; on clear lenses under any indoor light
+  // there is usually at least one bright specular highlight. Either extreme
+  // (bright OR very-off from the under-eye baseline) counts.
+  const lLensCentre = px([159, 145]);
+  const rLensCentre = px([386, 374]);
+  if (lLensCentre && rLensCentre){
+    const bothBright = lLensCentre.br() > 195 && rLensCentre.br() > 195;
+    const bothOff    = Math.abs(lLensCentre.br() - ueBr) > 22 &&
+                       Math.abs(rLensCentre.br() - ueBr) > 22;
+    if (bothBright || bothOff) score += 1;
+  }
 
-  const bridge=px([6,168,8]);
-  if (bridge && (fhBr-bridge.br())>38) score+=1;
+  // ── Signal D: Outer vertical rim / arm hinge ────────────────────
+  // The vertical edge of the frame sits just past the outer eye corner
+  // (landmarks 226/446 on the eye contour, 130/359 slightly outside).
+  const lOuter = px([226, 130]);
+  const rOuter = px([446, 359]);
+  if (lOuter && rOuter && lOuter.br() < ckBr - 12 && rOuter.br() < ckBr - 12)
+    score += 1;
 
-  // Needs the lens cue PLUS at least one corroborating cue (>=3), so a lone
-  // dark-eye reading on a bare face no longer raises the banner.
-  if(score>=3) found.push('glasses');
+  // ── Trigger ─────────────────────────────────────────────────────
+  // Threshold 2: any two independent, symmetric signals - OR one strong
+  // signal (A or B at their high tier) - trigger. This trades a small
+  // false-positive risk for the recall needed to catch thin metal frames.
+  // Consistent with the "block first; remove glasses to continue" policy:
+  // a wrongly-blocked bare-face user clears after a couple of frames of
+  // "no glasses" (STATE.accNegStreak); a wrongly-passed glasses user goes
+  // through the whole flow with bad data. Recall wins.
+  if (score >= 2) found.push('glasses');
 }
 
 function showGlassesWarn(msg) {
@@ -677,23 +729,25 @@ function onDetectResults(results) {
     drawBlush  (ctx,dlm,effW,effH,'rgba(230,150,140,0.55)','rgba(230,150,140,0.10)',2);
     drawContour(ctx,dlm,effW,effH,'rgba(190,140,80,0.6)','rgba(170,120,60,0.22)',2.5);
     ctx.restore();
-    // Accessory reminder (glasses) - NON-BLOCKING. It never disables Capture
-    // (pixel glasses detection is unreliable, so gating on it wrongly locks the
-    // user out). It is only a gentle nudge, and the ✕ silences it for the rest
-    // of the session. Face coverings that DO block are handled by occlusionCheck.
+    // Glasses / accessory check - BLOCKING. STATE.accActive drives the hard
+    // gate in assessReadiness. Polled every 4 frames (~0.25s at 30fps) rather
+    // than every 10, so a real pair of glasses shows the block within about
+    // half a second of the face becoming frontal. The pos streak was 2 (=1.5s
+    // latency after the throttle change); dropped to 1 so a single confident
+    // heuristic hit locks the block on. Neg streak stayed at 2 so a transient
+    // one-frame flicker doesn't clear the block.
     STATE.detectFrame=(STATE.detectFrame||0)+1;
-    if(STATE.detectFrame%10===1 && !STATE.accDismissedForSession){
+    if(STATE.detectFrame%4===1){
       const acc = (faceTurnOffset(lm) <= TURN_OK_ACCESSORY)
         ? checkAccessories(results.image, lm) : (STATE.accActive||[]);
       if(acc.length>0){
         STATE.accPosStreak=(STATE.accPosStreak||0)+1; STATE.accNegStreak=0;
-        if(STATE.accPosStreak>=2) STATE.accActive=acc;
+        if(STATE.accPosStreak>=1) STATE.accActive=acc;
       } else {
         STATE.accNegStreak=(STATE.accNegStreak||0)+1; STATE.accPosStreak=0;
         if(STATE.accNegStreak>=2) STATE.accActive=[];
       }
       if(STATE.accActive && STATE.accActive.includes('glasses')){
-        // Glasses always hard-block Capture, so the reminder is always strict.
         showGlassesWarn('Remove your glasses to continue — your face must be fully visible');
       } else {
         const el=document.getElementById('glasses-warn');
