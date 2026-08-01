@@ -1036,6 +1036,13 @@ function drawCaptureHint(ctx, W, H, ox, oy, message, count) {
 // ─────────────────────────────────────────
 //  WHITE GUIDE - plain open arc
 // ─────────────────────────────────────────
+// Placement guides are drawn in a bright neutral, never in the product colour.
+// Brow and contour shades are dark browns, so a guide stroked in the shade
+// disappeared against dark brow hair or a shadowed cheek. White reads on every
+// skin tone; the product colour is still used for the soft fill hint.
+const BROW_GUIDE    = 'rgba(255,255,255,0.95)';
+const CONTOUR_GUIDE = 'rgba(255,255,255,0.95)';
+
 function drawWhiteGuide(ctx, pts, lw) {
   ctx.save();
   ctx.beginPath(); softArcPath(ctx,pts);
@@ -1125,10 +1132,18 @@ function drawBrows(ctx, lm, W, H, sc, fc, lw) {
       ctx.restore();
     }
 
-    // 2. Dashed outline - boundary to stay within
+    // 2. Dashed outline - boundary to stay within.
+    //    Drawn in white over a thin dark backing: the brow shade is a dark
+    //    brown, so stroking the guide in the product colour made it invisible
+    //    against the user's own (dark) eyebrow hair.
     ctx.save();
     ctx.beginPath(); softPolyPath(ctx,allPts);
-    ctx.strokeStyle=sc; ctx.lineWidth=lw*0.8; ctx.lineJoin='round';
+    ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=lw*0.85+1.1; ctx.lineJoin='round';
+    ctx.setLineDash([lw*2.5,lw*1.5]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath(); softPolyPath(ctx,allPts);
+    ctx.strokeStyle=BROW_GUIDE; ctx.lineWidth=lw*0.85; ctx.lineJoin='round';
     ctx.setLineDash([lw*2.5,lw*1.5]); ctx.stroke(); ctx.setLineDash([]);
     ctx.restore();
 
@@ -1147,8 +1162,8 @@ function drawBrows(ctx, lm, W, H, sc, fc, lw) {
       ctx.save();
       ctx.translate(mx,my); ctx.rotate(hairAngle);
       ctx.beginPath(); ctx.moveTo(0,-sLen*0.62); ctx.lineTo(0,sLen*0.38);
-      ctx.strokeStyle=sc; ctx.lineWidth=lw*0.48;
-      ctx.lineCap='round'; ctx.globalAlpha=0.65; ctx.stroke();
+      ctx.strokeStyle=BROW_GUIDE; ctx.lineWidth=lw*0.4;
+      ctx.lineCap='round'; ctx.globalAlpha=0.9; ctx.stroke();
       ctx.restore();
     }
 
@@ -1169,7 +1184,7 @@ function drawBrows(ctx, lm, W, H, sc, fc, lw) {
       ctx.translate(tail.x,tail.y); ctx.rotate(ang);
       ctx.beginPath();
       ctx.moveTo(-ah,-ah*0.55); ctx.lineTo(0,0); ctx.lineTo(-ah,ah*0.55);
-      ctx.strokeStyle=sc; ctx.lineWidth=lw*0.7;
+      ctx.strokeStyle=BROW_GUIDE; ctx.lineWidth=lw*0.6;
       ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke();
       ctx.restore();
     }
@@ -1235,8 +1250,8 @@ function drawBlush(ctx, lm, W, H, sc, fc, lw, coverage) {
 
     ctx.save();
     ctx.beginPath(); ctx.ellipse(0, 0, rxV, ryV, 0, 0, Math.PI*2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.90)';
-    ctx.lineWidth   = lw * 1.2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth   = lw * 0.85;   // was 1.2 - the ring read as a thick band
     ctx.setLineDash([lw*3, lw*2]);
     ctx.lineJoin    = 'round';
     ctx.stroke();
@@ -1289,14 +1304,19 @@ function drawNoseContourGuide(ctx, lm, W, H, sc, fc, lw) {
     { p0:{x:bridge.x+off, y:bridge.y+nH*0.08}, ctrl:{x:alarR.x+off*0.4, y:bridge.y+nH*0.50}, p2:{x:alarR.x, y:alarR.y} },
   ].forEach(({p0,ctrl,p2})=>{
     if (fc) {
-      ctx.save(); ctx.filter='blur(2px)';
+      ctx.save(); ctx.filter='blur(2px)'; ctx.globalAlpha=0.5;
       ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.quadraticCurveTo(ctrl.x,ctrl.y,p2.x,p2.y);
-      ctx.strokeStyle=fc; ctx.lineWidth=lw*4; ctx.lineCap='round'; ctx.stroke();
+      ctx.strokeStyle=fc; ctx.lineWidth=lw*2.2; ctx.lineCap='round'; ctx.stroke();
       ctx.restore();
     }
     ctx.save();
     ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.quadraticCurveTo(ctrl.x,ctrl.y,p2.x,p2.y);
-    ctx.strokeStyle=sc; ctx.lineWidth=lw*0.85; ctx.lineCap='round';
+    ctx.strokeStyle='rgba(0,0,0,0.38)'; ctx.lineWidth=lw*0.8+1; ctx.lineCap='round';
+    ctx.setLineDash([lw*2,lw*1.5]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.quadraticCurveTo(ctrl.x,ctrl.y,p2.x,p2.y);
+    ctx.strokeStyle=CONTOUR_GUIDE; ctx.lineWidth=lw*0.8; ctx.lineCap='round';
     ctx.setLineDash([lw*2,lw*1.5]); ctx.stroke(); ctx.setLineDash([]);
     ctx.restore();
   });
@@ -1319,24 +1339,33 @@ function drawContour(ctx, lm, W, H, sc, fc, lw) {
 
   // Reusable quadratic bezier sweep with blurred hint + dashed stroke + arrow + dot
   function sweepStroke(p0, ctrl, p2) {
+    // Soft placement hint. Was lw*9 - a ~36px blurred band that read as one
+    // thick smear instead of a line to follow. Now a narrow, fainter cushion.
     if (fc) {
-      ctx.save(); ctx.filter='blur(4px)';
+      ctx.save(); ctx.filter='blur(3px)'; ctx.globalAlpha=0.55;
       ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.quadraticCurveTo(ctrl.x,ctrl.y,p2.x,p2.y);
-      ctx.strokeStyle=fc; ctx.lineWidth=lw*9; ctx.lineCap='round'; ctx.stroke();
+      ctx.strokeStyle=fc; ctx.lineWidth=lw*3.2; ctx.lineCap='round'; ctx.stroke();
       ctx.restore();
     }
+    // Fine white sweep line over a thin dark backing, so it stays legible on a
+    // shadowed cheek where the brown product colour vanished.
     ctx.save();
     ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.quadraticCurveTo(ctrl.x,ctrl.y,p2.x,p2.y);
-    ctx.strokeStyle=sc; ctx.lineWidth=lw*1.4; ctx.lineCap='round';
+    ctx.strokeStyle='rgba(0,0,0,0.40)'; ctx.lineWidth=lw*0.95+1.2; ctx.lineCap='round';
     ctx.setLineDash([lw*4,lw*2.5]); ctx.stroke(); ctx.setLineDash([]);
     ctx.restore();
-    const ah=lw*2.8, ang=Math.atan2(p2.y-ctrl.y, p2.x-ctrl.x);
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.quadraticCurveTo(ctrl.x,ctrl.y,p2.x,p2.y);
+    ctx.strokeStyle=CONTOUR_GUIDE; ctx.lineWidth=lw*0.95; ctx.lineCap='round';
+    ctx.setLineDash([lw*4,lw*2.5]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    const ah=lw*2.4, ang=Math.atan2(p2.y-ctrl.y, p2.x-ctrl.x);
     ctx.save(); ctx.translate(p2.x,p2.y); ctx.rotate(ang);
     ctx.beginPath(); ctx.moveTo(-ah,-ah*0.52); ctx.lineTo(0,0); ctx.lineTo(-ah,ah*0.52);
-    ctx.strokeStyle=sc; ctx.lineWidth=lw*0.9; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke();
+    ctx.strokeStyle=CONTOUR_GUIDE; ctx.lineWidth=lw*0.75; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke();
     ctx.restore();
-    ctx.save(); ctx.beginPath(); ctx.arc(p0.x,p0.y,Math.max(2.5,lw*0.95),0,Math.PI*2);
-    ctx.fillStyle='rgba(255,255,255,0.92)'; ctx.fill(); ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.arc(p0.x,p0.y,Math.max(2.2,lw*0.8),0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,0.95)'; ctx.fill(); ctx.restore();
   }
 
   // ① Nose sides - always shown
@@ -2037,19 +2066,17 @@ function onStepResults(results) {
 
   const blushCov=cs==='blush'?getBlushCoverage(document.getElementById('step-video'),blm):undefined;
 
-  if      (cs==='lips')     drawLips   (ctx,dlm,effW,effH,sc,fc,2.1,true,STATE.lipSubStep);
-  else if (cs==='blush')    drawBlush  (ctx,dlm,effW,effH,sc,fc,4,blushCov);
-  else if (cs==='eyebrows') drawBrows  (ctx,dlm,effW,effH,sc,fc,4.5);
-  else if (cs==='contour')  drawContour(ctx,dlm,effW,effH,sc,fc,4);
+  // The focal step is emphasised with a coloured GLOW on a single pass. It used
+  // to be drawn a second time on top, which doubled every line and was a large
+  // part of why the guides looked thick.
+  ctx.save();
+  if (cs===fs && cs!=='lips'){ ctx.shadowColor=hex; ctx.shadowBlur=12; }
 
-  if (cs===fs&&cs!=='lips'){
-    const gc=hexToRgba(hex,1.0);
-    ctx.save(); ctx.shadowColor=hex; ctx.shadowBlur=18;
-    if      (cs==='blush')    drawBlush  (ctx,dlm,effW,effH,gc,null,2,blushCov);
-    else if (cs==='eyebrows') drawBrows  (ctx,dlm,effW,effH,gc,null,2.5);
-    else if (cs==='contour')  drawContour(ctx,dlm,effW,effH,gc,null,2);
-    ctx.restore();
-  }
+  if      (cs==='lips')     drawLips   (ctx,dlm,effW,effH,sc,fc,2.1,true,STATE.lipSubStep);
+  else if (cs==='blush')    drawBlush  (ctx,dlm,effW,effH,sc,fc,2.3,blushCov);
+  else if (cs==='eyebrows') drawBrows  (ctx,dlm,effW,effH,sc,fc,2.6);
+  else if (cs==='contour')  drawContour(ctx,dlm,effW,effH,sc,fc,2.4);
+  ctx.restore();
 
   // Gentle hint when the head is turned far enough that accuracy drops.
   if (turnVis < 0.7){
