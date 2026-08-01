@@ -607,7 +607,9 @@ function runGlassesHeuristic(px, fhBr, found) {
 }
 
 function showGlassesWarn(msg) {
-  if(STATE.accDismissedForSession) return;
+  // Session-dismiss is intentionally NOT respected any more. Glasses hard-block
+  // Capture and the user should not be able to silence a blocking condition -
+  // the banner must stay visible until the glasses are actually removed.
   const el=document.getElementById('glasses-warn');
   if(!el) return;
   const sp=el.querySelector('span');
@@ -617,8 +619,8 @@ function showGlassesWarn(msg) {
 function hideGlassesWarn(userDismissed) {
   const el=document.getElementById('glasses-warn');
   if(el) el.classList.add('hide');
-  // Clicking the ✕ passes true → silence the reminder for the rest of the session.
-  if(userDismissed===true) STATE.accDismissedForSession=true;
+  // Dismiss button is retained for the DOM but does not silence future warnings
+  // (the detection loop re-shows it as long as glasses are present).
 }
 
 // ─────────────────────────────────────────
@@ -691,11 +693,8 @@ function onDetectResults(results) {
         if(STATE.accNegStreak>=2) STATE.accActive=[];
       }
       if(STATE.accActive && STATE.accActive.includes('glasses')){
-        // Wording matches whether it actually blocks (trained model) or is a
-        // soft reminder (heuristic).
-        showGlassesWarn(glassesModelReady()
-          ? 'Remove your glasses to continue — your face must be fully visible'
-          : 'If you are wearing glasses, removing them improves accuracy (optional)');
+        // Glasses always hard-block Capture, so the reminder is always strict.
+        showGlassesWarn('Remove your glasses to continue — your face must be fully visible');
       } else {
         const el=document.getElementById('glasses-warn');
         if(el&&!el.classList.contains('hide')) el.classList.add('hide');
@@ -884,16 +883,15 @@ function assessReadiness(image, lm) {
     if (avg>212) return {ok:false, reason:'Too bright - reduce glare'};
   } catch(e){}
 
-  // Face COVERINGS (mask, hand, object, hair) are caught reliably by
-  // occlusionCheck above and block capture.
+  // Face COVERINGS (mask, hand, object, hair) are caught by occlusionCheck.
   //
-  // GLASSES block capture ONLY when a TRAINED model is providing the detection
-  // (reliable). With just the pixel heuristic, glasses can't be told apart from
-  // dark eye areas / shadows, so they stay a non-blocking reminder — an
-  // unreliable guess must never trap the user. Drop a model into models/glasses/
-  // and this gate activates automatically.
-  if (glassesModelReady() && STATE.accActive && STATE.accActive.includes('glasses')){
-    return {ok:false, reason:'Remove your glasses - your face must be fully visible'};
+  // GLASSES hard-block Capture regardless of whether the trained model is
+  // loaded. The pixel heuristic is conservative (needs lens cue + at least one
+  // corroborating cue, only runs on near-frontal faces, and requires a 2-frame
+  // positive streak), so false positives on a bare face should be rare - and
+  // the user explicitly wants no capture path while glasses are detected.
+  if (STATE.accActive && STATE.accActive.includes('glasses')){
+    return {ok:false, reason:'Remove your glasses to continue - your face must be fully visible'};
   }
   return {ok:true, reason:''};
 }
@@ -1335,6 +1333,18 @@ function drawContour(ctx, lm, W, H, sc, fc, lw) {
   const faceH = Math.abs(lm[10].y  - lm[152].y) * H;
   const faceW = Math.abs(lm[234].x - lm[454].x) * W;
 
+  // Per-side visibility, same idea as drawBlush: the receding side of a turned
+  // face has landmarks that project onto the wrong anatomy, so the sweep would
+  // draw contour on the visible side. Fade each half by how much of it is
+  // actually facing the camera; this stops the "wrong side" tracking.
+  const noseRatio = (lm[1].x - lm[234].x) / ((lm[454].x - lm[234].x) || 0.001);
+  const visL = Math.min(1, Math.max(0, (noseRatio - 0.15) / 0.22));
+  const visR = Math.min(1, Math.max(0, (0.85 - noseRatio) / 0.22));
+  // Landmark 234 sits on the left side of the face; 454 on the right.
+  const sideVis = (startIdx) => (startIdx===234 || startIdx===103 || startIdx===116)
+    ? visL
+    : (startIdx===454 || startIdx===332 || startIdx===345) ? visR : 1;
+
   function P(i){ return {x:lm[i].x*W, y:lm[i].y*H}; }
 
   // Reusable quadratic bezier sweep with blurred hint + dashed stroke + arrow + dot
@@ -1368,58 +1378,75 @@ function drawContour(ctx, lm, W, H, sc, fc, lw) {
     ctx.fillStyle='rgba(255,255,255,0.95)'; ctx.fill(); ctx.restore();
   }
 
-  // ① Nose sides - always shown
+  // ① Nose sides - always shown (nose is centerline, both sides visible when
+  // the head is anywhere near frontal).
   drawNoseContourGuide(ctx, lm, W, H, sc, fc, lw);
+
+  // Per-side wrapper: attenuates alpha for the receding half of the face so
+  // the sweep on that side fades out instead of jumping to the wrong anatomy.
+  // Anything under 0.05 is dropped entirely - a barely-visible ghost still
+  // reads as "there is a line on the wrong cheek".
+  const sided = (startIdx, drawFn) => {
+    const v = sideVis(startIdx);
+    if (v <= 0.05) return;
+    ctx.save(); ctx.globalAlpha = v; drawFn(); ctx.restore();
+  };
 
   // ② Cheek / jaw strokes - per face shape
   if (shape==='oval') {
     // Classic cheekbone hollow sweep: ear → upper-cheek → hollow
     [{s:234,c:116,e:132},{s:454,c:345,e:361}].forEach(({s,c,e})=>{
-      const p0=P(s), ctrl=P(c), pe=P(e);
-      sweepStroke(p0, ctrl, {x:p0.x+0.65*(pe.x-p0.x), y:p0.y+0.65*(pe.y-p0.y)+faceH*0.01});
+      sided(s, ()=>{
+        const p0=P(s), ctrl=P(c), pe=P(e);
+        sweepStroke(p0, ctrl, {x:p0.x+0.65*(pe.x-p0.x), y:p0.y+0.65*(pe.y-p0.y)+faceH*0.01});
+      });
     });
   }
 
   if (shape==='round') {
     // Long sweep temple → cheek-mid → lower jaw to slim sides
     [{s:234,c:116,e:172},{s:454,c:345,e:397}].forEach(({s,c,e})=>{
-      sweepStroke(P(s), P(c), P(e));
+      sided(s, ()=> sweepStroke(P(s), P(c), P(e)));
     });
   }
 
   if (shape==='oblong') {
     // Cheek sweep + short forehead-corner marks to add visual width
     [{s:234,c:116,e:132},{s:454,c:345,e:361}].forEach(({s,c,e})=>{
-      const p0=P(s), ctrl=P(c), pe=P(e);
-      sweepStroke(p0, ctrl, {x:p0.x+0.65*(pe.x-p0.x), y:p0.y+0.65*(pe.y-p0.y)+faceH*0.01});
+      sided(s, ()=>{
+        const p0=P(s), ctrl=P(c), pe=P(e);
+        sweepStroke(p0, ctrl, {x:p0.x+0.65*(pe.x-p0.x), y:p0.y+0.65*(pe.y-p0.y)+faceH*0.01});
+      });
     });
     [{i:103,dir:1},{i:332,dir:-1}].forEach(({i,dir})=>{
-      const sp=P(i);
-      sweepStroke(sp, {x:sp.x+dir*faceW*0.06,y:sp.y+faceH*0.03}, {x:sp.x+dir*faceW*0.13,y:sp.y+faceH*0.06});
+      sided(i, ()=>{
+        const sp=P(i);
+        sweepStroke(sp, {x:sp.x+dir*faceW*0.06,y:sp.y+faceH*0.03}, {x:sp.x+dir*faceW*0.13,y:sp.y+faceH*0.06});
+      });
     });
   }
 
   if (shape==='heart') {
     // Jaw sides: from cheek outward down toward chin to widen jaw visually
     [{s:234,c:172,e:150},{s:454,c:397,e:379}].forEach(({s,c,e})=>{
-      sweepStroke(P(s), P(c), P(e));
+      sided(s, ()=> sweepStroke(P(s), P(c), P(e)));
     });
   }
 
   if (shape==='diamond') {
     // Forehead sides (down) + lower jaw sides to balance wide cheekbones
     [{s:103,c:234,e:116},{s:332,c:454,e:345}].forEach(({s,c,e})=>{
-      sweepStroke(P(s), P(c), P(e));
+      sided(s, ()=> sweepStroke(P(s), P(c), P(e)));
     });
     [{s:116,c:172,e:150},{s:345,c:397,e:379}].forEach(({s,c,e})=>{
-      sweepStroke(P(s), P(c), P(e));
+      sided(s, ()=> sweepStroke(P(s), P(c), P(e)));
     });
   }
 
   if (shape==='square') {
     // Like oval but extended to jaw corner to soften angular jaw
     [{s:234,c:116,e:172},{s:454,c:345,e:397}].forEach(({s,c,e})=>{
-      sweepStroke(P(s), P(c), P(e));
+      sided(s, ()=> sweepStroke(P(s), P(c), P(e)));
     });
   }
 }
@@ -2062,7 +2089,12 @@ function onStepResults(results) {
   const blm = (cs==='blush' && STATE.blushLm) ? STATE.blushLm : dlm;
 
   ctx.save(); ctx.translate(-ox,-oy);
-  ctx.globalAlpha = turnVis;
+  // Step-screen guides fade slightly harder than the detection overlay: on the
+  // step screen the user is following a line, so a drifted guide is worse than
+  // no guide. turnVis alone bottoms out at 0.35; squaring the fraction above
+  // 0.7 doubles the fade rate past a moderate turn without touching frontal.
+  const stepFade = turnVis>=0.7 ? turnVis : 0.7 * Math.pow(turnVis/0.7, 1.6);
+  ctx.globalAlpha = stepFade;
 
   const blushCov=cs==='blush'?getBlushCoverage(document.getElementById('step-video'),blm):undefined;
 
@@ -2079,10 +2111,27 @@ function onStepResults(results) {
   ctx.restore();
 
   // Gentle hint when the head is turned far enough that accuracy drops.
+  // The overlay canvas can be as narrow as ~180 px on a small phone once the
+  // mirror shares the row with the reference panel, so the full sentence gets
+  // clipped at both edges. Fit-to-width: shrink the font, and drop to the
+  // short form when even that would still overflow the visible box.
   if (turnVis < 0.7){
     ctx.globalAlpha = 1;
-    drawMirroredText(ctx, 'Face forward for the most accurate guide',
-      W/2+ox, H*0.08+oy, '600 13px Jost, sans-serif', 'rgba(255,255,255,0.80)', true);
+    const full  = 'Face forward for the most accurate guide';
+    const short = 'Face forward';
+    const maxW  = Math.max(80, W - 28);            // 14 px inset each side
+    ctx.save();
+    let px = 13;
+    ctx.font = `600 ${px}px Jost, sans-serif`;
+    let text = full;
+    if (ctx.measureText(full).width > maxW){
+      px = Math.max(10, Math.floor(13 * maxW / ctx.measureText(full).width));
+      ctx.font = `600 ${px}px Jost, sans-serif`;
+      if (ctx.measureText(full).width > maxW) text = short;
+    }
+    ctx.restore();
+    drawMirroredText(ctx, text,
+      W/2+ox, H*0.08+oy, `600 ${px}px Jost, sans-serif`, 'rgba(255,255,255,0.80)', true);
   }
   ctx.restore();
   checkStepLighting(video);
@@ -3184,11 +3233,25 @@ function drawVirtualMakeup(ctx, lm, W, H, opts) {
   }
 
   // ── Blush: tilted ellipse along the cheekbone (per-side vis) ──
+  // Clipped to the face silhouette. Without a clip, the ellipse crosses the
+  // jaw/temple edge on a turned face and the coloured halo sits on the dark
+  // background, which reads as a bright outline extending past the cheek.
   if(tone.blush?.hex && mult.blush>0.05){
     const {r,g,b}=rgb(tone.blush.hex);
     const baseAlpha=mult.blush;
     ctx.save();
     ctx.globalCompositeOperation='source-over';
+    // MediaPipe FACE_OVAL - one clockwise loop around the visible face.
+    const FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,
+                       365,379,378,400,377,152,148,176,149,150,136,172,58,
+                       132,93,234,127,162,21,54,103,67,109];
+    ctx.beginPath();
+    FACE_OVAL.forEach((i,k)=>{
+      const x=lm[i].x*W, y=lm[i].y*H;
+      if (k===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.closePath();
+    ctx.clip();
     [[234,visL],[454,visR]].forEach(([temple,vis])=>{
       if (vis<=0.02) return;
       const av=baseAlpha*vis;
@@ -3196,8 +3259,9 @@ function drawVirtualMakeup(ctx, lm, W, H, opts) {
       const angle=Math.atan2(ty-nosePy, tx-nosePx);
       const cx=nosePx+0.62*(tx-nosePx);
       const cy=nosePy+0.62*(ty-nosePy)+faceRef*0.04;
-      const rMaj=faceRef*0.26;
-      const rMin=faceRef*0.15;
+      // Tightened: was 0.26/0.15 which crossed the jaw edge on many frames.
+      const rMaj=faceRef*0.22;
+      const rMin=faceRef*0.13;
       ctx.save();
       ctx.translate(cx,cy); ctx.rotate(angle);
       const grad=ctx.createRadialGradient(0,0,0, 0,0,rMaj);

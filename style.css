@@ -722,7 +722,13 @@ html, body {
 .feedback-area.good{ border-color:var(--success); }
 .feedback-area.bad { border-color:var(--danger); }
 
-.step-actions{ display:flex; flex-direction:column; gap:.6rem; margin-top:auto; }
+/* Column of step-screen buttons, centered so the 320px-capped primary/compare
+   buttons don't sit flush-left against the wider ghost/retry buttons. */
+.step-actions{
+  display:flex; flex-direction:column; align-items:center;
+  gap:.6rem; margin-top:auto;
+}
+.step-actions > button{ width:100%; max-width:320px; }
 
 /* ══ SUMMARY ══ */
 .summary-trophy{ font-size:3rem; color:var(--rose-gold); animation:pulse 2s infinite; }
