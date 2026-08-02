@@ -599,63 +599,58 @@ function runGlassesHeuristic(px, fhBr, found) {
   let score = 0;
 
   // ── Signal A: Nose-bridge break ─────────────────────────────────
-  // Almost every pair of glasses - metal, plastic, rimless, rimmed - has
-  // hardware between the two lenses on the bridge of the nose. Sample the
-  // strip there and compare to the same-lighting forehead skin above. On a
-  // bare face this diff is tiny; on any glasses it's noticeable.
+  // Glasses hardware between the two lenses creates a darker strip than
+  // the forehead skin. Thresholds tightened: on a bare face the natural
+  // brow shadow can produce a small (<18) diff that used to fire the weak
+  // tier and false-positive; only a genuine hardware-scale diff scores now.
   const bridgeBand = px([168, 6, 197, 193, 417]);
   if (bridgeBand){
     const diff = fhCleanBr - bridgeBand.br();
-    if      (diff > 20) score += 2;    // strong: dark hardware clearly present
-    else if (diff > 10) score += 1;    // weak: possible thin frame
+    if      (diff > 26) score += 2;    // strong: obvious hardware
+    else if (diff > 16) score += 1;    // weak: possible thin frame
   }
 
   // ── Signal B: Lower rim on the cheek ────────────────────────────
-  // The lower edge of a glasses lens sits on BARE CHEEK skin (unlike the
-  // upper edge, which fights with the eyebrow). Sample below-eye landmarks
-  // that fall on the cheek right where a lower rim would rest. Symmetric -
-  // BOTH sides must show it, so an asymmetric shadow (one side of the face
-  // in shade) does not trigger.
-  const lLowerRim = px([119, 118, 117, 111]);   // below left eye, on cheek
-  const rLowerRim = px([348, 347, 346, 340]);   // below right eye, on cheek
+  // Lower lens edge sits on bare cheek skin. Thresholds tightened so
+  // natural under-eye shadow (which is asymmetric on many faces) doesn't
+  // pass both sides at once.
+  const lLowerRim = px([119, 118, 117, 111]);
+  const rLowerRim = px([348, 347, 346, 340]);
   if (lLowerRim && rLowerRim){
     const dL = ckBr - lLowerRim.br();
     const dR = ckBr - rLowerRim.br();
-    if      (dL > 12 && dR > 12) score += 2;   // strong: rim clearly darker
-    else if (dL >  6 && dR >  6) score += 1;   // weak: thin metal
+    if      (dL > 16 && dR > 16) score += 2;
+    else if (dL > 10 && dR > 10) score += 1;
   }
 
   // ── Signal C: Lens reflectivity ─────────────────────────────────
-  // Glass catches ambient light differently than skin. On tinted or dark
-  // lenses the sample is very dark; on clear lenses under any indoor light
-  // there is usually at least one bright specular highlight. Either extreme
-  // (bright OR very-off from the under-eye baseline) counts.
+  // Glass catches ambient light differently than skin. Tightened: needs
+  // BOTH a bright reflection AND consistent off-baseline, so a single
+  // bright spot from a window on bare skin doesn't count.
   const lLensCentre = px([159, 145]);
   const rLensCentre = px([386, 374]);
   if (lLensCentre && rLensCentre){
-    const bothBright = lLensCentre.br() > 195 && rLensCentre.br() > 195;
-    const bothOff    = Math.abs(lLensCentre.br() - ueBr) > 22 &&
-                       Math.abs(rLensCentre.br() - ueBr) > 22;
-    if (bothBright || bothOff) score += 1;
+    const bothBright = lLensCentre.br() > 210 && rLensCentre.br() > 210;
+    const bothOff    = Math.abs(lLensCentre.br() - ueBr) > 28 &&
+                       Math.abs(rLensCentre.br() - ueBr) > 28;
+    if (bothBright && bothOff) score += 1;
   }
 
   // ── Signal D: Outer vertical rim / arm hinge ────────────────────
-  // The vertical edge of the frame sits just past the outer eye corner
-  // (landmarks 226/446 on the eye contour, 130/359 slightly outside).
   const lOuter = px([226, 130]);
   const rOuter = px([446, 359]);
-  if (lOuter && rOuter && lOuter.br() < ckBr - 12 && rOuter.br() < ckBr - 12)
+  if (lOuter && rOuter && lOuter.br() < ckBr - 16 && rOuter.br() < ckBr - 16)
     score += 1;
 
   // ── Trigger ─────────────────────────────────────────────────────
-  // Threshold 2: any two independent, symmetric signals - OR one strong
-  // signal (A or B at their high tier) - trigger. This trades a small
-  // false-positive risk for the recall needed to catch thin metal frames.
-  // Consistent with the "block first; remove glasses to continue" policy:
-  // a wrongly-blocked bare-face user clears after a couple of frames of
-  // "no glasses" (STATE.accNegStreak); a wrongly-passed glasses user goes
-  // through the whole flow with bad data. Recall wins.
-  if (score >= 2) found.push('glasses');
+  // Threshold 3 (was 2). This means at minimum:
+  //   * one signal at strong tier (2) + one at any tier (1), OR
+  //   * three weak-tier signals simultaneously.
+  // A bare face's natural darkness might trigger one weak signal; hitting
+  // two independent, symmetric ones at strong tiers is very rare without
+  // an actual frame present. That's the sweet spot between missing thin
+  // metal (the old failure mode) and flagging a bare face (the current one).
+  if (score >= 3) found.push('glasses');
 }
 
 function showGlassesWarn(msg) {
@@ -740,9 +735,15 @@ function onDetectResults(results) {
     if(STATE.detectFrame%4===1){
       const acc = (faceTurnOffset(lm) <= TURN_OK_ACCESSORY)
         ? checkAccessories(results.image, lm) : (STATE.accActive||[]);
+      // Two-frame streaks in both directions so a single noisy frame can't
+      // set OR clear the state. Poll interval is 4 frames (~130ms), so
+      // detection latency and clearance latency are both ~260ms — fast
+      // enough to feel responsive, slow enough to filter one-frame noise.
+      // Single-frame confirmation (pos>=1) was tried last round and was
+      // exactly what caused the current false-positive complaint.
       if(acc.length>0){
         STATE.accPosStreak=(STATE.accPosStreak||0)+1; STATE.accNegStreak=0;
-        if(STATE.accPosStreak>=1) STATE.accActive=acc;
+        if(STATE.accPosStreak>=2) STATE.accActive=acc;
       } else {
         STATE.accNegStreak=(STATE.accNegStreak||0)+1; STATE.accPosStreak=0;
         if(STATE.accNegStreak>=2) STATE.accActive=[];
@@ -1079,8 +1080,26 @@ function drawCaptureHint(ctx, W, H, ox, oy, message, count) {
     ctx.fillText(String(count), 0, 0);
     ctx.restore();
   } else if (message){
-    drawMirroredText(ctx, message, cx, cy,
-      '600 15px Jost, sans-serif', 'rgba(255,240,225,0.95)', true);
+    // The glasses message is already shown in full on the top-of-camera banner,
+    // so re-drawing it as an overlay is redundant AND long enough to clip the
+    // narrow phone overlay canvas horizontally. Skip the overlay in that case.
+    const isGlassesMsg = message.toLowerCase().indexOf('glasses')>=0;
+    if (!isGlassesMsg){
+      // Fit-to-width: shrink the font so the boxed background stays inside the
+      // canvas on narrow (phone) overlays, same pattern used by the Face-forward
+      // hint on the step screen.
+      const maxW = Math.max(80, W - 28);
+      ctx.save();
+      let px = 15;
+      ctx.font = `600 ${px}px Jost, sans-serif`;
+      let text = message;
+      if (ctx.measureText(text).width > maxW){
+        px = Math.max(10, Math.floor(15 * maxW / ctx.measureText(text).width));
+      }
+      ctx.restore();
+      drawMirroredText(ctx, text, cx, cy,
+        `600 ${px}px Jost, sans-serif`, 'rgba(255,240,225,0.95)', true);
+    }
   }
   ctx.restore();
 }
